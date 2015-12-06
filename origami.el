@@ -36,6 +36,7 @@
 (require 's)
 (require 'cl)
 (require 'origami-parsers)
+(require 'f)
 
 ;;; overlay manipulation
 
@@ -644,6 +645,92 @@ uncover any bugs."
 
 (defun origami-find-occurrence-show-node ()
   (call-interactively 'origami-show-node))
+
+;;; persistence
+
+;; HT vimish-fold
+(defcustom origami-dir
+  (file-name-as-directory (f-expand "origami" user-emacs-directory))
+  "The directory where origami keeps its files.
+
+The string should end with a slash.  If it doesn't exist, it will
+be created automatically."
+  :tag   "Directory for Folding Info"
+  :type  'directory)
+
+;; HT vimish-fold
+(defun origami-make-file-name (file)
+  "Return path to file where information about folding in FILE is written."
+  (f-expand
+   (replace-regexp-in-string
+    (regexp-opt (list (f-path-separator) ":")) "!" file)
+   origami-dir))
+
+;; HT http://stackoverflow.com/a/30568768/351392
+(defun eval-file (file)
+  "Execute FILE and return the result of the last expression."
+  (eval
+   (ignore-errors
+     (read-from-whole-string
+      (with-temp-buffer
+        (insert-file-contents file)
+        (buffer-string))))))
+
+(defun origami-restore-folds (&optional buffer-or-name)
+  "Restore folds in BUFFER-OR-NAME, if they have been saved.
+
+BUFFER-OR-NAME defaults to current buffer.
+
+Return T is some folds have been restored and NIL otherwise."
+  (with-current-buffer (or buffer-or-name (current-buffer))
+    (let ((filename (buffer-file-name))
+          (b (current-buffer))
+          )
+      (when filename
+        (let ((fold-file (origami-make-file-name filename)))
+          (when (and fold-file (f-readable? fold-file))
+            (origami-apply-new-tree
+             b
+             (origami-get-fold-tree b)
+             (eval-file fold-file))
+            ))))))
+
+;; the history does not print readably because it contains
+;; nested vectors and overlays, so we need custom serialization
+;; we'll convert the history into an sexp that eval's to the
+;; same value
+(defun origami-serialize (x)
+  (pcase (type-of x)
+    ('overlay `(make-overlay ,(overlay-start x) ,(overlay-end x)))
+    ('vector `(vector ,@(mapcar #'origami-serialize x)))
+    ('cons `(list ,@(mapcar #'origami-serialize x)))
+    ('symbol `(quote ,x))
+    (_ x)
+    ))
+
+(defun origami-save-folds (&optional buffer-or-name)
+  "Save folds in BUFFER-OR-NAME, which should have associated file.
+
+BUFFER-OR-NAME defaults to current buffer."
+  (with-current-buffer (or buffer-or-name (current-buffer))
+    (let ((filename (buffer-file-name))
+          (history-serialized (origami-serialize (origami-get-cached-tree (current-buffer)))))
+      (when filename
+        (let ((fold-file (origami-make-file-name filename)))
+          (if history-serialized
+              (with-temp-buffer
+                (pp history-serialized (current-buffer))
+                (let ((version-control 'never))
+                  (condition-case nil
+                      (progn
+                        (f-mkdir origami-dir)
+                        (write-region (point-min) (point-max) fold-file)
+                        (message nil))
+                    (file-error
+                     (message "Origami: can't write %s" fold-file)))
+                  (kill-buffer (current-buffer))))
+            (when (f-exists? fold-file)
+              (f-delete fold-file))))))))
 
 ;;;###autoload
 (define-minor-mode origami-mode
