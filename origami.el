@@ -689,22 +689,26 @@ Return T is some folds have been restored and NIL otherwise."
       (when filename
         (let ((fold-file (origami-make-file-name filename)))
           (when (and fold-file (f-readable? fold-file))
-            (origami-apply-new-tree
-             b
-             (origami-get-fold-tree b)
-             (eval-file fold-file))
+            (let (persistent-tree (funcall (eval-file fold-file) b))
+              (origami-apply-new-tree b (origami-get-fold-tree b) persistent-tree)
+              (setq origami-history persistent-tree)
+              )
             ))))))
 
 ;; the history does not print readably because it contains
-;; nested vectors and overlays, so we need custom serialization
+;; nested vectors and overlays, so we need custom serialization.
 ;; we'll convert the history into an sexp that eval's to the
 ;; same value
 (defun origami-serialize (x)
   (pcase (type-of x)
-    ('overlay `(make-overlay ,(overlay-start x) ,(overlay-end x)))
+    ('overlay
+     (let ((is-invisible (overlay-get x 'invisible)))
+       `(let ((ov (origami-create-overlay ,(overlay-start x) ,(overlay-end x) 0 buf)))
+          ,(when is-invisible '(origami-hide-overlay ov))
+          ov)))
     ('vector `(vector ,@(mapcar #'origami-serialize x)))
     ('cons `(list ,@(mapcar #'origami-serialize x)))
-    ('symbol `(quote ,x))
+    ('symbol (if (equalp x nil) nil `(quote ,x)))
     (_ x)
     ))
 
@@ -714,7 +718,7 @@ Return T is some folds have been restored and NIL otherwise."
 BUFFER-OR-NAME defaults to current buffer."
   (with-current-buffer (or buffer-or-name (current-buffer))
     (let ((filename (buffer-file-name))
-          (history-serialized (origami-serialize (origami-get-cached-tree (current-buffer)))))
+          (history-serialized `(lambda (buf) ,(origami-serialize (origami-get-cached-tree (current-buffer))))))
       (when filename
         (let ((fold-file (origami-make-file-name filename)))
           (if history-serialized
