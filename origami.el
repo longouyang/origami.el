@@ -689,9 +689,11 @@ Return T is some folds have been restored and NIL otherwise."
       (when filename
         (let ((fold-file (origami-make-file-name filename)))
           (when (and fold-file (f-readable? fold-file))
-            (let (persistent-tree (funcall (eval-file fold-file) b))
-              (origami-apply-new-tree b (origami-get-fold-tree b) persistent-tree)
-              (setq origami-history persistent-tree)
+            (let ((history (funcall (eval-file fold-file) b))
+                  (current-tree (origami-get-fold-tree b)))
+              (setq origami-history history)
+              (origami-apply-new-tree b current-tree (origami-get-fold-tree b))
+
               )
             ))))))
 
@@ -718,7 +720,7 @@ Return T is some folds have been restored and NIL otherwise."
 BUFFER-OR-NAME defaults to current buffer."
   (with-current-buffer (or buffer-or-name (current-buffer))
     (let ((filename (buffer-file-name))
-          (history-serialized `(lambda (buf) ,(origami-serialize (origami-get-cached-tree (current-buffer))))))
+          (history-serialized `(lambda (buf) ,(origami-serialize origami-history))))
       (when filename
         (let ((fold-file (origami-make-file-name filename)))
           (if history-serialized
